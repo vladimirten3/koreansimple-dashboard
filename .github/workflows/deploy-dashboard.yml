@@ -1,0 +1,53 @@
+name: Deploy Dashboard
+
+on:
+  schedule:
+    # Запуск каждый день в 02:00 UTC (05:00 MSK)
+    - cron: '0 2 * * *'
+  workflow_dispatch: # Ручной запуск
+  push:
+    branches:
+      - main
+    paths:
+      - 'scripts/amocrm/**'
+      - 'data/analytics/**'
+      - '.github/workflows/deploy-dashboard.yml'
+
+jobs:
+  update-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install supabase python-dotenv
+      
+      - name: Upload all data to Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          python3 scripts/amocrm/upload_all_data_to_supabase.py
+      
+      - name: Generate dashboard
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          python3 scripts/amocrm/generate_dashboard_from_supabase.py
+      
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add web_dashboard/index.html
+          git diff --staged --quiet || git commit -m "Auto-update dashboard from Supabase [skip ci]"
+          git push
