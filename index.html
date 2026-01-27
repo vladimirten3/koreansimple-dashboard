@@ -162,7 +162,7 @@
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV1bnB6YWlubXV0bXNtanNybXNtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1MDk1NjgsImV4cCI6MjA4NTA4NTU2OH0.B7Mz4tvEKPY2sGegy0cEAAVvbmb03Q3c2r-MWPVRmoI';
         
         // Инициализация Supabase клиента
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         
         async function loadData() {
             try {
@@ -171,10 +171,11 @@
                 document.getElementById('error').style.display = 'none';
                 
                 // Загрузка данных из Supabase
-                const { data: deals, error } = await supabase
+                const { data: deals, error } = await supabaseClient
                     .from('deals')
                     .select('*')
-                    .order('created_date', { ascending: false });
+                    .order('created_date', { ascending: false })
+                    .limit(1000); // Ограничение для производительности
                 
                 if (error) throw error;
                 
@@ -200,7 +201,11 @@
         function displayDashboard(deals) {
             // Расчет статистики
             const totalDeals = deals.length;
-            const successDeals = deals.filter(d => d.status_id === 142).length;
+            // Успешные сделки - ищем по тексту статуса (содержит "успешн" или "реализован")
+            const successDeals = deals.filter(d => {
+                const status = (d.status || '').toLowerCase();
+                return status.includes('успешн') || status.includes('реализован') || status.includes('закрыт');
+            }).length;
             const totalAmount = deals.reduce((sum, d) => sum + (d.price || 0), 0);
             const conversionRate = totalDeals > 0 ? (successDeals / totalDeals * 100).toFixed(1) : 0;
             
@@ -253,7 +258,7 @@
             // Группировка по менеджерам
             const managerMap = {};
             deals.forEach(deal => {
-                const manager = deal.responsible_user_name || 'Неизвестно';
+                const manager = deal.responsible_user || 'Неизвестно';
                 managerMap[manager] = (managerMap[manager] || 0) + 1;
             });
             
@@ -277,14 +282,11 @@
         }
         
         function renderLeadSources(deals) {
-            // Группировка по источникам (из custom_fields)
+            // Группировка по источникам
             const sourceMap = {};
             deals.forEach(deal => {
-                // Ищем поле "Источник" в custom_fields
-                const sourceField = deal.custom_fields?.find(f => 
-                    f.name === 'Источник' || f.name === '÷÷Источник трафика'
-                );
-                const source = sourceField?.values?.[0]?.value || 'Неизвестно';
+                // Используем поля source или traffic_source напрямую из базы
+                const source = deal.source || deal.traffic_source || 'Неизвестно';
                 sourceMap[source] = (sourceMap[source] || 0) + 1;
             });
             
