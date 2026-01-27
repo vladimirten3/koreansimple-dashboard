@@ -38,6 +38,10 @@ def convert_supabase_to_dashboard_format(supabase_deals):
     """Преобразует данные из Supabase в формат для дашборда"""
     dashboard_deals = []
     
+    # Создаем маппинг имени менеджера на уникальный ID
+    manager_name_to_id = {}
+    next_manager_id = 1000000  # Начинаем с большого числа, чтобы не конфликтовать с реальными ID
+    
     for deal in supabase_deals:
         # Преобразуем дату из ISO в timestamp
         created_at = 0
@@ -72,6 +76,19 @@ def convert_supabase_to_dashboard_format(supabase_deals):
             else:
                 status_id = None  # Активная сделка
         
+        # Для успешных сделок, если нет closed_at, используем created_at
+        if status_id == STATUS_SUCCESS and closed_at is None and created_at > 0:
+            closed_at = created_at
+        
+        # Маппинг менеджера по имени
+        responsible_user_id = None
+        manager_name = deal.get('responsible_user')
+        if manager_name:
+            if manager_name not in manager_name_to_id:
+                manager_name_to_id[manager_name] = next_manager_id
+                next_manager_id += 1
+            responsible_user_id = manager_name_to_id[manager_name]
+        
         dashboard_deal = {
             'id': int(deal.get('deal_id', 0)) if deal.get('deal_id') else deal.get('id', 0),
             'name': deal.get('name', 'Новая сделка'),
@@ -79,8 +96,8 @@ def convert_supabase_to_dashboard_format(supabase_deals):
             'status_id': status_id,
             'created_at': created_at,
             'closed_at': closed_at,
-            'responsible_user_id': None,  # Будет маппиться по имени
-            'responsible_user_name': deal.get('responsible_user'),
+            'responsible_user_id': responsible_user_id,
+            'responsible_user_name': manager_name,
             'product': deal.get('learning_goal') or 'Не указан',
             'country': deal.get('country') or 'Не указана',
             'loss_reason': deal.get('loss_reason'),
@@ -94,7 +111,7 @@ def convert_supabase_to_dashboard_format(supabase_deals):
         
         dashboard_deals.append(dashboard_deal)
     
-    return dashboard_deals
+    return dashboard_deals, manager_name_to_id
 
 
 def generate_dashboard():
@@ -122,7 +139,8 @@ def generate_dashboard():
     print(f"✅ Загружено {len(supabase_deals)} сделок")
     
     # Преобразуем в формат дашборда
-    dashboard_deals = convert_supabase_to_dashboard_format(supabase_deals)
+    dashboard_deals, manager_name_to_id = convert_supabase_to_dashboard_format(supabase_deals)
+    print(f"👥 Найдено {len(manager_name_to_id)} уникальных менеджеров")
     
     # Загружаем шаблон
     print("📖 Загрузка шаблона дашборда...")
@@ -140,6 +158,11 @@ def generate_dashboard():
     # Формируем JSON для вставки
     deals_json = json.dumps(dashboard_deals, ensure_ascii=False, indent=12)
     
+    # Создаем маппинг usersMapping для обратной совместимости
+    # usersMapping[manager_id] = manager_name
+    users_mapping = {str(v): k for k, v in manager_name_to_id.items()}
+    users_mapping_json = json.dumps(users_mapping, ensure_ascii=False, indent=12)
+    
     # Заменяем данные в шаблоне
     pattern = r'const allDeals = \[.*?\];'
     replacement = f'const allDeals = {deals_json};'
@@ -152,6 +175,18 @@ def generate_dashboard():
         pattern2 = r'(const allDeals = )\[.*?(\];)'
         replacement2 = f'\\1{deals_json}\\2'
         new_template = re.sub(pattern2, replacement2, template, flags=re.DOTALL)
+    
+    # Обновляем usersMapping, если он есть в шаблоне
+    users_mapping_pattern = r'const usersMapping = \{.*?\};'
+    users_mapping_replacement = f'const usersMapping = {users_mapping_json};'
+    new_template = re.sub(users_mapping_pattern, users_mapping_replacement, new_template, flags=re.DOTALL)
+    
+    # Если usersMapping не найден, добавляем его после allDeals
+    if 'const usersMapping' not in new_template:
+        # Ищем место после const allDeals
+        insert_pattern = r'(const allDeals = [^;]+;)'
+        insert_replacement = f'\\1\n        const usersMapping = {users_mapping_json};'
+        new_template = re.sub(insert_pattern, insert_replacement, new_template, flags=re.DOTALL)
     
     # Сохраняем
     OUTPUT_DIR.mkdir(exist_ok=True)
