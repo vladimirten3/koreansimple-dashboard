@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Дашборд продаж KoreanSimple</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        header {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        header h1 { font-size: 28px; color: #333; margin-bottom: 8px; }
+        header .subtitle { color: #666; font-size: 14px; }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        
+        .stat-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #6366f1;
+            margin: 8px 0;
+        }
+        
+        .stat-label {
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .chart-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+            font-size: 18px;
+        }
+        
+        .error {
+            background: #fee;
+            color: #c00;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 20px 0;
+        }
+        
+        .refresh-btn {
+            background: #6366f1;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .refresh-btn:hover {
+            background: #4f46e5;
+        }
+        
+        .last-update {
+            color: #888;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h1>📊 Дашборд продаж KoreanSimple</h1>
+                    <p class="subtitle">Аналитика продаж и активности менеджеров</p>
+                </div>
+                <div>
+                    <button class="refresh-btn" onclick="loadData()">🔄 Обновить</button>
+                    <span class="last-update" id="lastUpdate"></span>
+                </div>
+            </div>
+        </header>
+        
+        <div id="loading" class="loading">
+            <p>⏳ Загрузка данных...</p>
+        </div>
+        
+        <div id="error" class="error" style="display: none;"></div>
+        
+        <div id="dashboard" style="display: none;">
+            <!-- Основная статистика -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Всего сделок</div>
+                    <div class="stat-value" id="totalDeals">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Успешные сделки</div>
+                    <div class="stat-value" id="successDeals">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Общая сумма (₩)</div>
+                    <div class="stat-value" id="totalAmount">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Конверсия</div>
+                    <div class="stat-value" id="conversionRate">0%</div>
+                </div>
+            </div>
+            
+            <!-- Графики -->
+            <div class="chart-card">
+                <h3>Динамика продаж по дням</h3>
+                <div id="salesByDay"></div>
+            </div>
+            
+            <div class="chart-card">
+                <h3>Продажи по менеджерам</h3>
+                <div id="salesByManager"></div>
+            </div>
+            
+            <div class="chart-card">
+                <h3>Источники лидов</h3>
+                <div id="leadSources"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Конфигурация Supabase
+        const SUPABASE_URL = 'https://uunpzainmutmsmjsrmsm.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV1bnB6YWlubXV0bXNtanNybXNtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1MDk1NjgsImV4cCI6MjA4NTA4NTU2OH0.B7Mz4tvEKPY2sGegy0cEAAVvbmb03Q3c2r-MWPVRmoI';
+        
+        // Инициализация Supabase клиента
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        
+        async function loadData() {
+            try {
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('dashboard').style.display = 'none';
+                document.getElementById('error').style.display = 'none';
+                
+                // Загрузка данных из Supabase
+                const { data: deals, error } = await supabase
+                    .from('deals')
+                    .select('*')
+                    .order('created_date', { ascending: false });
+                
+                if (error) throw error;
+                
+                // Обработка и отображение данных
+                displayDashboard(deals);
+                
+                // Обновляем время последнего обновления
+                document.getElementById('lastUpdate').textContent = 
+                    'Обновлено: ' + new Date().toLocaleString('ru-RU');
+                
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('dashboard').style.display = 'block';
+                
+            } catch (error) {
+                console.error('Ошибка загрузки данных:', error);
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = 
+                    '❌ Ошибка загрузки данных: ' + error.message;
+            }
+        }
+        
+        function displayDashboard(deals) {
+            // Расчет статистики
+            const totalDeals = deals.length;
+            const successDeals = deals.filter(d => d.status_id === 142).length;
+            const totalAmount = deals.reduce((sum, d) => sum + (d.price || 0), 0);
+            const conversionRate = totalDeals > 0 ? (successDeals / totalDeals * 100).toFixed(1) : 0;
+            
+            // Обновление карточек статистики
+            document.getElementById('totalDeals').textContent = totalDeals.toLocaleString('ru-RU');
+            document.getElementById('successDeals').textContent = successDeals.toLocaleString('ru-RU');
+            document.getElementById('totalAmount').textContent = totalAmount.toLocaleString('ru-RU');
+            document.getElementById('conversionRate').textContent = conversionRate + '%';
+            
+            // График продаж по дням
+            renderSalesByDay(deals);
+            
+            // График по менеджерам
+            renderSalesByManager(deals);
+            
+            // График источников
+            renderLeadSources(deals);
+        }
+        
+        function renderSalesByDay(deals) {
+            // Группировка по дням
+            const dayMap = {};
+            deals.forEach(deal => {
+                const date = deal.created_date?.split(' ')[0] || 'Неизвестно';
+                dayMap[date] = (dayMap[date] || 0) + 1;
+            });
+            
+            const dates = Object.keys(dayMap).sort();
+            const counts = dates.map(d => dayMap[d]);
+            
+            const trace = {
+                x: dates,
+                y: counts,
+                type: 'scatter',
+                mode: 'lines+markers',
+                marker: { color: '#6366f1', size: 8 },
+                line: { color: '#6366f1', width: 2 }
+            };
+            
+            const layout = {
+                margin: { t: 20, r: 20, b: 40, l: 50 },
+                xaxis: { title: 'Дата' },
+                yaxis: { title: 'Количество сделок' }
+            };
+            
+            Plotly.newPlot('salesByDay', [trace], layout, { responsive: true });
+        }
+        
+        function renderSalesByManager(deals) {
+            // Группировка по менеджерам
+            const managerMap = {};
+            deals.forEach(deal => {
+                const manager = deal.responsible_user_name || 'Неизвестно';
+                managerMap[manager] = (managerMap[manager] || 0) + 1;
+            });
+            
+            const managers = Object.keys(managerMap);
+            const counts = managers.map(m => managerMap[m]);
+            
+            const trace = {
+                x: managers,
+                y: counts,
+                type: 'bar',
+                marker: { color: '#8b5cf6' }
+            };
+            
+            const layout = {
+                margin: { t: 20, r: 20, b: 100, l: 50 },
+                xaxis: { title: 'Менеджер', tickangle: -45 },
+                yaxis: { title: 'Количество сделок' }
+            };
+            
+            Plotly.newPlot('salesByManager', [trace], layout, { responsive: true });
+        }
+        
+        function renderLeadSources(deals) {
+            // Группировка по источникам (из custom_fields)
+            const sourceMap = {};
+            deals.forEach(deal => {
+                // Ищем поле "Источник" в custom_fields
+                const sourceField = deal.custom_fields?.find(f => 
+                    f.name === 'Источник' || f.name === '÷÷Источник трафика'
+                );
+                const source = sourceField?.values?.[0]?.value || 'Неизвестно';
+                sourceMap[source] = (sourceMap[source] || 0) + 1;
+            });
+            
+            const sources = Object.keys(sourceMap);
+            const counts = sources.map(s => sourceMap[s]);
+            
+            const trace = {
+                labels: sources,
+                values: counts,
+                type: 'pie',
+                marker: {
+                    colors: ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981']
+                }
+            };
+            
+            const layout = {
+                margin: { t: 20, r: 20, b: 20, l: 20 }
+            };
+            
+            Plotly.newPlot('leadSources', [trace], layout, { responsive: true });
+        }
+        
+        // Загрузка данных при старте
+        window.addEventListener('load', loadData);
+    </script>
+</body>
+</html>
