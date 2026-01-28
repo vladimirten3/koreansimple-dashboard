@@ -77,8 +77,14 @@ def convert_supabase_to_dashboard_format(supabase_deals):
                 status_id = None  # Активная сделка
         
         # Для успешных сделок, если нет closed_at, используем created_at
-        if status_id == STATUS_SUCCESS and closed_at is None and created_at > 0:
-            closed_at = created_at
+        # Это критично для отображения в графиках!
+        if status_id == STATUS_SUCCESS:
+            if closed_at is None:
+                if created_at > 0:
+                    closed_at = created_at
+                else:
+                    # Если даже created_at нет, используем текущую дату (не должно быть, но на всякий случай)
+                    closed_at = int(datetime.now().timestamp())
         
         # Маппинг менеджера по имени
         responsible_user_id = None
@@ -177,16 +183,25 @@ def generate_dashboard():
         new_template = re.sub(pattern2, replacement2, template, flags=re.DOTALL)
     
     # Обновляем usersMapping, если он есть в шаблоне
+    # Используем более надежное регулярное выражение с учетом многострочности
     users_mapping_pattern = r'const usersMapping = \{.*?\};'
     users_mapping_replacement = f'const usersMapping = {users_mapping_json};'
     new_template = re.sub(users_mapping_pattern, users_mapping_replacement, new_template, flags=re.DOTALL)
     
-    # Если usersMapping не найден, добавляем его после allDeals
-    if 'const usersMapping' not in new_template:
-        # Ищем место после const allDeals
+    # Если usersMapping не найден или не был заменен, добавляем его после allDeals
+    if f'const usersMapping = {users_mapping_json}' not in new_template:
+        # Ищем место после const allDeals (может быть на одной строке или с переносами)
         insert_pattern = r'(const allDeals = [^;]+;)'
         insert_replacement = f'\\1\n        const usersMapping = {users_mapping_json};'
         new_template = re.sub(insert_pattern, insert_replacement, new_template, flags=re.DOTALL)
+        
+        # Если все еще не найден, ищем более широкий паттерн
+        if f'const usersMapping = {users_mapping_json}' not in new_template:
+            # Ищем место где-то после allDeals
+            all_deals_match = re.search(r'const allDeals = \[.*?\];', new_template, flags=re.DOTALL)
+            if all_deals_match:
+                insert_pos = all_deals_match.end()
+                new_template = new_template[:insert_pos] + f'\n        const usersMapping = {users_mapping_json};' + new_template[insert_pos:]
     
     # Сохраняем
     OUTPUT_DIR.mkdir(exist_ok=True)
